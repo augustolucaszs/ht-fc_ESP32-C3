@@ -3,36 +3,35 @@
 #include <Preferences.h>
 #include <PubSubClient.h>
 #include <ArduinoOTA.h>
+#include <Arduino.h>
 #include "secrets.h"
-
 
 WiFiClient espClient;
 PubSubClient client(espClient);
 
-
-#define LED_WIFI 2 // LED azul no GPIO2
+#define LED_WIFI 2 // Blue LED on GPIO2
 
 Preferences prefs;
 WebServer server(80);
 
 bool inConfigMode = false;
 
-// Página de configuração HTML
+// Configuration page HTML
 const char* configPage = R"rawliteral(
 <!DOCTYPE html><html>
-<head><meta charset="UTF-8"><title>Configurar Wi-Fi</title></head>
+<head><meta charset="UTF-8"><title>Configure Wi-Fi</title></head>
 <body>
-  <h2>Configurar Wi-Fi</h2>
+  <h2>Configure Wi-Fi</h2>
   <form action="/save" method="POST">
     SSID: <input name="ssid"><br><br>
-    Senha: <input name="password" type="password"><br><br>
-    <input type="submit" value="Salvar e Conectar">
+    Password: <input name="password" type="password"><br><br>
+    <input type="submit" value="Save and Connect">
   </form>
 </body>
 </html>
 )rawliteral";
 
-// Salva os novos dados de Wi-Fi e reinicia
+// Saves the new Wi-Fi data and restarts
 void handleSave() {
   String ssid = server.arg("ssid");
   String password = server.arg("password");
@@ -42,17 +41,17 @@ void handleSave() {
   prefs.putString("password", password);
   prefs.end();
 
-  server.send(200, "text/html", "<h2>Salvo! Reiniciando...</h2>");
+  server.send(200, "text/html", "<h2>Saved! Restarting...</h2>");
   delay(2000);
   ESP.restart();
 }
 
-// Página principal no modo AP
+// Main page in AP mode
 void handleRoot() {
   server.send(200, "text/html", configPage);
 }
 
-// Inicia o Access Point com página de configuração
+// Starts the Access Point with configuration page
 void startConfigPortal() {
   inConfigMode = true;
   WiFi.mode(WIFI_AP);
@@ -61,10 +60,10 @@ void startConfigPortal() {
   server.on("/", handleRoot);
   server.on("/save", HTTP_POST, handleSave);
   server.begin();
-  Serial.println("Modo configuração iniciado em http://10.0.0.1");
+  Serial.println("Configuration mode started at http://10.0.0.1");
 }
 
-// Conecta-se ao Wi-Fi salvo na flash
+// Connects to the Wi-Fi saved in flash
 bool connectToWiFi() {
   prefs.begin("wifi", true);
   String ssid = prefs.getString("ssid", "");
@@ -72,16 +71,16 @@ bool connectToWiFi() {
   prefs.end();
 
   if (ssid == "") {
-    Serial.println("Nenhuma rede salva");
+    Serial.println("No saved network");
     return false;
   }
 
   WiFi.begin(ssid.c_str(), password.c_str());
-  Serial.println("Conectando-se a: " + ssid);
+  Serial.println("Connecting to: " + ssid);
 
   int attempts = 0;
   while (WiFi.status() != WL_CONNECTED && attempts < 50) {
-    digitalWrite(LED_WIFI, !digitalRead(LED_WIFI)); // pisca rápido
+    digitalWrite(LED_WIFI, !digitalRead(LED_WIFI));
     delay(100);
     attempts++;
   }
@@ -91,17 +90,16 @@ bool connectToWiFi() {
 
 
 // Connection to the MQTT
-void connectToMQTT() {
+void connectToMQTT(String mac) {
   client.setServer(mqttServer, mqttPort);
-  
+
   while (!client.connected()) {
     Serial.println("Connecting to the MQTT broker...");
 
     if (client.connect("ESP32Client", mqttUsername, mqttPassword)) {
       Serial.println("Connected to the MQTT!");
 
-      String mac = WiFi.macAddress();
-      Serial.println("Sending MACAdress to the topic:");
+      Serial.println("Sending MAC address to the topic:");
       Serial.println(mac);
 
       client.publish(mqttTopic, mac.c_str());
@@ -121,38 +119,42 @@ void setup() {
   delay(1000);
 
   if (!connectToWiFi()) {
-    Serial.println("Falha na conexão. Entrando em modo de configuração.");
+    Serial.println("Connection failed. Entering configuration mode.");
     startConfigPortal();
   } else {
-    Serial.println("Conectado com sucesso!");
+    Serial.println("Successfully connected!");
     Serial.print("IP: "); Serial.println(WiFi.localIP());
-    digitalWrite(LED_WIFI, LOW); // LED azul fixo
-    connectToMQTT(); // <<<<< conecta e publica a MAC
+    digitalWrite(LED_WIFI, LOW);
 
-    // OTA Setup
-    ArduinoOTA.setHostname("ESP-C3");
+    String mac = WiFi.macAddress();
+    connectToMQTT(mac);
+
+    String macClean = mac;
+    macClean.replace(":", "");
+    ArduinoOTA.setHostname(("ESP_" + macClean).c_str());
+    ArduinoOTA.setPassword(otaPassword);
 
     ArduinoOTA
       .onStart([]() {
-        Serial.println("Iniciando OTA...");
-      })
-      .onEnd([]() {
-        Serial.println("\nOTA finalizado!");
+        Serial.println("Starting OTA...");
+            })
+            .onEnd([]() {
+        Serial.println("\nOTA completed!");
       })
       .onProgress([](unsigned int progress, unsigned int total) {
-        Serial.printf("Progresso: %u%%\r", (progress * 100) / total);
+        Serial.printf("Progress: %u%%\r", (progress * 100) / total);
       })
       .onError([](ota_error_t error) {
-        Serial.printf("Erro OTA [%u]: ", error);
-        if (error == OTA_AUTH_ERROR) Serial.println("Falha na autenticação");
-        else if (error == OTA_BEGIN_ERROR) Serial.println("Falha no início");
-        else if (error == OTA_CONNECT_ERROR) Serial.println("Falha na conexão");
-        else if (error == OTA_RECEIVE_ERROR) Serial.println("Falha ao receber");
-        else if (error == OTA_END_ERROR) Serial.println("Falha no fim");
-      });
+        Serial.printf("OTA Error [%u]: ", error);
+        if (error == OTA_AUTH_ERROR) Serial.println("Authentication failed");
+        else if (error == OTA_BEGIN_ERROR) Serial.println("Begin failed");
+        else if (error == OTA_CONNECT_ERROR) Serial.println("Connection failed");
+        else if (error == OTA_RECEIVE_ERROR) Serial.println("Receive failed");
+        else if (error == OTA_END_ERROR) Serial.println("End failed");
+            });
 
-    ArduinoOTA.begin();
-    Serial.println("OTA pronto! Use a IDE para enviar novos códigos via Wi-Fi.");
+          ArduinoOTA.begin();
+          Serial.println("OTA ready! Use the IDE to upload new code via Wi-Fi.");
 
   }
 }
@@ -160,14 +162,13 @@ void setup() {
 void loop() {
   if (inConfigMode) {
     server.handleClient();
-    // Pisca LED rapidamente
     digitalWrite(LED_WIFI, !digitalRead(LED_WIFI));
-    delay(100); // 10 vezes por segundo
+    delay(100);
   }
 
   if (WiFi.status() == WL_CONNECTED) {
-    ArduinoOTA.handle();          // ✅ Keep OTA alive
-    client.loop();                // ✅ Keep MQTT alive
+    ArduinoOTA.handle();
+    client.loop();
   }
 }
 
