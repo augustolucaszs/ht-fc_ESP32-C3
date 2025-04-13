@@ -1,66 +1,83 @@
 
-# 💧 ht-fc v1.1 – Flow Control with ESP32-C3
+# 💧 HT-FC – Flow and Consumption Control with ESP32-C3 (PlatformIO)
 
-Arduino-based project for controlling a solenoid valve using an ESP32-C3, featuring:
+This is a PlatformIO project for controlling a solenoid valve and monitoring water flow and daily consumption using an ESP32-C3. It supports Wi-Fi configuration, MQTT integration, and OTA updates.
 
-- Flow measurement (pulse-based sensor)
-- Manual/automatic mode via button
-- Wi-Fi connection with fallback AP mode
-- MQTT communication with backend
-- Remote OTA updates
+## ✨ Features
 
-## 📦 Main Files
+- ✅ **Wi-Fi configuration portal** when no credentials are saved
+- ✅ **MAC address identification** and MQTT-based registration
+- ✅ **Daily consumption value** received dynamically via MQTT
+- ✅ **MQTT-based OTA updates** with automatic verification of MAC address
+- ✅ **Blue LED (GPIO 2)** for Wi-Fi connection status
+- ✅ **Persistent storage** of Wi-Fi credentials using `Preferences.h`
+- ✅ **JSON payload support** with `ArduinoJson`
+- ✅ **PlatformIO-compatible** structure for easier development
 
-- `ht-fc_v1.1.ino`: Main ESP-C3 logic
-- `secrets.h`: Credentials file (not included in Git)
-- `.gitignore`: Ignores sensitive and temporary files
+## 📁 Project Structure
+
+```
+HT-FC/
+├── include/           # For header files like secrets.h
+├── lib/               # Optional libraries
+├── src/               # Main source code (main.cpp)
+├── test/              # Unit tests (optional)
+├── .vscode/           # VSCode settings
+├── platformio.ini     # PlatformIO configuration file
+└── .gitignore         # Files to be ignored by Git
+```
+
+## 🔐 `secrets.h` file
+
+This file is not included in the repo. Create it inside the `include/` folder:
+
+```cpp
+const char* ssid = "YOUR_WIFI";
+const char* password = "YOUR_PASSWORD";
+const char* mqttServer = "MQTT_SERVER_IP";
+const int   mqttPort = 1883;
+const char* mqttUsername = "MQTT_USERNAME";
+const char* mqttPassword = "MQTT_PASSWORD";
+const char* otaPassword = "OTA_PASSWORD";
+```
 
 ## 🚀 How to Use
 
-1. Clone this repository:
+1. Clone the repo:
    ```bash
-   git clone https://github.com/augustolucaszs/ht-fc_v1.1.git
+   git clone https://github.com/augustolucaszs/ht-fc_ESP32-C3.git
    ```
-2. Add a `secrets.h` file with the following content:
-   ```cpp
-   const char* ssid = "YOUR_WIFI";
-   const char* password = "YOUR_PASSWORD";
-   const char* mqttServer = "MQTT_SERVER_IP";
-   const int   mqttPort = 1883;
-   const char* mqttUser = "MQTT_USER";
-   const char* mqttPassword = "MQTT_PASSWORD";
+2. Create the `secrets.h` file as shown above.
+3. Compile and upload with:
+   ```bash
+   platformio run --target upload
    ```
 
-3. Compile and upload to your **ESP32-C3** board using the Arduino IDE.
+## 🔁 Behavior Summary
+
+- If Wi-Fi credentials are not found, it starts an **Access Point** (`HTFC - 10.0.0.1`) with a configuration page.
+- Once connected, it:
+  - Sends the device MAC address to the MQTT `accessRequest/` topic
+  - Subscribes to:
+    - `esp/ota/` for OTA updates
+    - Its own MAC address topic to receive consumption updates
+- Parses JSON payloads to:
+  - Update firmware via OTA if the MAC matches
+  - Save and publish received daily consumption to a `/test` topic
 
 ## 🛠️ Dependencies
 
-- WiFi / WiFiManager libraries
-- PubSubClient
-- ArduinoJson
-- HTTPUpdate (for OTA)
-
-## 📡 MQTT
-
-The device publishes data in the following format:
-
-```json
-{
-  "Vazao": 3.45,
-  "VDia": 12.3,
-  "Modo": 1,
-  "Valv": 0,
-  "Limt": 20.0
-}
-```
-
-## 🧪 OTA
-
-Upon receiving an MQTT command with a valid URL on the `esp32/ota` topic, the ESP32-C3 performs a remote update.
+- `WiFi`
+- `WebServer`
+- `Preferences`
+- `PubSubClient`
+- `ArduinoOTA`
+- `ArduinoJson`
+- `HTTPClient`, `HTTPUpdate`
 
 ## ⚠️ Security
 
-> The `secrets.h` file **must not be versioned**. It is listed in `.gitignore`.
+> Do **NOT** version the `secrets.h` file. It's listed in `.gitignore`.
 
 ## 🧑‍💻 Author
 

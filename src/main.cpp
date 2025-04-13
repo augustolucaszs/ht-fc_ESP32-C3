@@ -22,6 +22,11 @@ WebServer server(80);
 
 bool inConfigMode = false;
 
+float dayConsumption = 0.0; // Global variable to store the day consumption value
+String mac = ""; // Global variable to store the MAC address
+
+
+
 // Configuration page HTML
 const char* configPage = R"rawliteral(
 <!DOCTYPE html><html>
@@ -96,7 +101,7 @@ bool connectToWiFi() {
 
 
 // Connection to the MQTT
-void connectToMQTT(String mac) {
+void connectToMQTT() {
   client.setServer(mqttServer, mqttPort);
   client.setCallback(callback);
 
@@ -138,12 +143,15 @@ void callback(char* topic, byte* payload, unsigned int length) {
     }
 
     // Convert the payload string to a float
-    float dayConsumption = payloadStr.toFloat();
+    dayConsumption = payloadStr.toFloat();
     Serial.print("Received dayConsumption value: ");
     Serial.println(dayConsumption);
 
-    // Save the value or process it as needed
-    // Example: Store it in a global variable or use it in calculations
+    // Publish the dayConsumption value to a test topic for verification
+    String testMqttTopic = mac + "/test";
+    String dayConsumptionStr = String(dayConsumption, 2); // Convert to string with 2 decimal places
+    client.publish(testMqttTopic.c_str(), dayConsumptionStr.c_str());
+
   } else {
     JsonDocument doc;
     DeserializationError error = deserializeJson(doc, payload, length);
@@ -203,8 +211,8 @@ void setup() {
     Serial.print("IP: "); Serial.println(WiFi.localIP());
     digitalWrite(LED_WIFI, LOW);
 
-    String mac = WiFi.macAddress();
-    connectToMQTT(mac);
+    mac = WiFi.macAddress();
+    connectToMQTT();
 
     ArduinoOTA.setHostname(("ESP_" + mac).c_str());
     ArduinoOTA.setPassword(otaPassword);
