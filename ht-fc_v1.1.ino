@@ -4,10 +4,16 @@
 #include <PubSubClient.h>
 #include <ArduinoOTA.h>
 #include <Arduino.h>
+#include <HTTPClient.h>
+#include <HTTPUpdate.h>
 #include "secrets.h"
+#include <ArduinoJson.h>
+
 
 WiFiClient espClient;
 PubSubClient client(espClient);
+
+void callback(char* topic, byte* payload, unsigned int length);
 
 #define LED_WIFI 2 // Blue LED on GPIO2
 
@@ -92,6 +98,7 @@ bool connectToWiFi() {
 // Connection to the MQTT
 void connectToMQTT(String mac) {
   client.setServer(mqttServer, mqttPort);
+  client.setCallback(callback);
 
   while (!client.connected()) {
     Serial.println("Connecting to the MQTT broker...");
@@ -99,18 +106,88 @@ void connectToMQTT(String mac) {
     if (client.connect("ESP32Client", mqttUsername, mqttPassword)) {
       Serial.println("Connected to the MQTT!");
 
-      Serial.println("Sending MAC address to the topic:");
+      String otaTopic = "esp/ota/";
+      client.subscribe(otaTopic.c_str());
+      Serial.print("Subscribed to OTA topic: ");
+      Serial.println(otaTopic);
+
+      client.subscribe(mac.c_str());
+      Serial.print("Subscribed to macAddress device's topic: ");
       Serial.println(mac);
 
-      client.publish(mqttTopic, mac.c_str());
-    } else {
+      Serial.print("Sending MAC address to the topic: ");
+      Serial.println(mqttTopic);
+
+      client.publish(mqttTopic, mac.c_str()); // Publish MAC address to the topic: accessRequest/
+      
+        } else {
       Serial.print("Failed to connect to the MQTT. rc=");
       Serial.print(client.state());
       Serial.println(" Trying again in 5 sec...");
       delay(5000);
+        }
+      }
+    }
+
+void callback(char* topic, byte* payload, unsigned int length) {
+  if (String(topic) == WiFi.macAddress()) {
+    // Convert payload to a string
+    String payloadStr;
+    for (unsigned int i = 0; i < length; i++) {
+      payloadStr += (char)payload[i];
+    }
+
+    // Convert the payload string to a float
+    float dayConsumption = payloadStr.toFloat();
+    Serial.print("Received dayConsumption value: ");
+    Serial.println(dayConsumption);
+
+    // Save the value or process it as needed
+    // Example: Store it in a global variable or use it in calculations
+  } else {
+    JsonDocument doc;
+    DeserializationError error = deserializeJson(doc, payload, length);
+
+    if (error) {
+      Serial.print("Failed to parse OTA message: ");
+      Serial.println(error.c_str());
+      return;
+    }
+
+    String targetMac = doc["mac"];
+    String firmwareURL = doc["url"];
+
+    String localMac = WiFi.macAddress();
+
+    if (targetMac != localMac) {
+      Serial.print("OTA message not for this device (");
+      Serial.print(localMac);
+      Serial.println("). Ignoring.");
+      return;
+    }
+
+    Serial.println("OTA message is for me. Starting update from:");
+    Serial.println(firmwareURL);
+
+    WiFiClient httpClient;
+    t_httpUpdate_return ret = httpUpdate.update(httpClient, firmwareURL);
+
+    switch (ret) {
+    case HTTP_UPDATE_OK:
+      Serial.println("OTA via MQTT succeeded!");
+      break;
+    case HTTP_UPDATE_NO_UPDATES:
+      Serial.println("No update available.");
+      break;
+    case HTTP_UPDATE_FAILED:
+      Serial.printf("OTA via MQTT failed. Error (%d): %s\n",
+      httpUpdate.getLastError(),
+      httpUpdate.getLastErrorString().c_str());
+      break;
     }
   }
 }
+
 
 void setup() {
   pinMode(LED_WIFI, OUTPUT);
@@ -129,9 +206,7 @@ void setup() {
     String mac = WiFi.macAddress();
     connectToMQTT(mac);
 
-    String macClean = mac;
-    macClean.replace(":", "");
-    ArduinoOTA.setHostname(("ESP_" + macClean).c_str());
+    ArduinoOTA.setHostname(("ESP_" + mac).c_str());
     ArduinoOTA.setPassword(otaPassword);
 
     ArduinoOTA
