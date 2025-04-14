@@ -8,8 +8,7 @@ This is a PlatformIO project for controlling a solenoid valve and monitoring wat
 - ✅ **Wi-Fi configuration portal** when no credentials are saved
 - ✅ **MAC address identification** and MQTT-based registration
 - ✅ **Daily consumption value** received dynamically via MQTT
-- ✅ **MQTT-based OTA updates** with automatic verification of MAC address
-- ✅ **Blue LED (GPIO 2)** for Wi-Fi connection status
+- ✅ **MQTT-based OTA updates** with automatic verification of MAC address - not tested
 - ✅ **Persistent storage** of Wi-Fi credentials using `Preferences.h`
 - ✅ **JSON payload support** with `ArduinoJson`
 - ✅ **PlatformIO-compatible** structure for easier development
@@ -62,8 +61,8 @@ const char* otaPassword = "OTA_PASSWORD";
     - `esp/ota/` for OTA updates
     - Its own MAC address topic to receive consumption updates
 - Parses JSON payloads to:
-  - Update firmware via OTA if the MAC matches
-  - Save and publish received daily consumption to a `/test` topic
+  - Update firmware via OTA if the MAC matches - not tested.
+  - Save and publish received daily consumption every minute.
 
 ## 🛠️ Dependencies
 
