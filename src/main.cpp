@@ -9,13 +9,19 @@
 #include "secrets.h"
 #include <ArduinoJson.h>
 
+#define LED_WIFI 2 // Blue LED on GPIO2
+#define interruptPin 3
+#define relayPin 19
+
+volatile unsigned int pulseCount = 0;
+const unsigned long debounceDelay = 150;  // in ms — adjust depending on your reed
+unsigned long lastReportTime = 0;
+volatile unsigned long lastInterruptTime = 0;
 
 WiFiClient espClient;
 PubSubClient client(espClient);
 
 void callback(char* topic, byte* payload, unsigned int length);
-
-#define LED_WIFI 2 // Blue LED on GPIO2
 
 Preferences prefs;
 WebServer server(80);
@@ -24,8 +30,7 @@ bool inConfigMode = false;
 
 float dayConsumption = 0.0; // Global variable to store the day consumption value
 String mac = ""; // Global variable to store the MAC address
-
-
+boolean debug = false; // Debug mode flag
 
 // Configuration page HTML
 const char* configPage = R"rawliteral(
@@ -98,7 +103,6 @@ bool connectToWiFi() {
 
   return WiFi.status() == WL_CONNECTED;
 }
-
 
 // Connection to the MQTT
 void connectToMQTT() {
@@ -197,9 +201,23 @@ void callback(char* topic, byte* payload, unsigned int length) {
 }
 
 
+void IRAM_ATTR handleInterrupt() {
+  unsigned long now = millis();
+  if (now - lastInterruptTime > debounceDelay) {
+    pulseCount++;
+    lastInterruptTime = now;
+  }
+}
+
 void setup() {
   pinMode(LED_WIFI, OUTPUT);
+  pinMode(relayPin, OUTPUT);
+  pinMode(interruptPin, INPUT);
+
   digitalWrite(LED_WIFI, HIGH);
+  digitalWrite(relayPin, LOW); // Relay off
+  attachInterrupt(digitalPinToInterrupt(interruptPin), handleInterrupt, FALLING); // RISING since LOW -> HIGH
+  
   Serial.begin(115200);
   delay(1000);
 
@@ -253,5 +271,35 @@ void loop() {
     ArduinoOTA.handle();
     client.loop();
   }
+
+  if (millis() - lastReportTime >= 60000) {
+    noInterrupts();
+    unsigned int liters = pulseCount;
+    pulseCount = 0;
+    interrupts();
+  
+    Serial.print("Liters in last minute: ");
+    Serial.println(liters);
+    dayConsumption += liters;
+
+    // Compose MQTT topic and message
+    String debugTopic = mac + "/debug";
+    String payload = "Liters in last minute: " + String(liters);
+
+    if (!client.connected()) {
+      Serial.println("MQTT disconnected. Reconnecting...");
+      connectToMQTT(); // reconecta se necessário
+    }
+    
+    // Publish to MQTT
+    if (client.connected()) {
+      client.publish(debugTopic.c_str(), payload.c_str(), true);
+    } else {
+      Serial.println("MQTT not connected — skipping publish.");
+    }
+
+    lastReportTime = millis();
+  }
+  
 }
 
