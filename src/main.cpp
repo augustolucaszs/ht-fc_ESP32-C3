@@ -71,6 +71,14 @@ void handleRoot() {
 void startConfigPortal() {
   inConfigMode = true;
   WiFi.mode(WIFI_AP);
+  IPAddress local_IP(10, 0, 0, 1);
+  IPAddress gateway(10, 0, 0, 1);
+  IPAddress subnet(255, 255, 255, 0);
+
+  if (!WiFi.softAPConfig(local_IP, gateway, subnet)) {
+    Serial.println("Failed to configure AP IP address");
+  }
+
   WiFi.softAP("HTFC - 10.0.0.1");
 
   server.on("/", handleRoot);
@@ -95,13 +103,20 @@ bool connectToWiFi() {
   Serial.println("Connecting to: " + ssid);
 
   int attempts = 0;
-  while (WiFi.status() != WL_CONNECTED && attempts < 50) {
+  unsigned long startAttemptTime = millis();
+  while (WiFi.status() != WL_CONNECTED && (millis() - startAttemptTime) < 5000) {
     digitalWrite(LED_WIFI, !digitalRead(LED_WIFI));
     delay(100);
-    attempts++;
   }
 
-  return WiFi.status() == WL_CONNECTED;
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("Failed to connect to Wi-Fi. Entering configuration mode.");
+    startConfigPortal(); // Fallback to configuration mode
+    return false;
+  }
+
+  Serial.println("Successfully connected to Wi-Fi!");
+  return true;
 }
 
 // Connection to the MQTT
@@ -124,22 +139,86 @@ void connectToMQTT() {
       Serial.print("Subscribed to macAddress device's topic: ");
       Serial.println(mac);
 
-      Serial.print("Sending MAC address to the topic: ");
+      String resetWifiTopic = mac + "/resetWifi";
+      client.subscribe(resetWifiTopic.c_str());
+      Serial.print("Subscribed to reset Wi-Fi topic: ");
+      Serial.println(resetWifiTopic);
+
+      Serial.print("Sending MAC address and IP address to the topic: ");
       Serial.println(mqttTopic);
 
-      client.publish(mqttTopic, mac.c_str()); // Publish MAC address to the topic: accessRequest/
+      // Create a JSON payload with MAC address and IP address
+      DynamicJsonDocument doc(256);
+      doc["mac"] = mac;
+      doc["ip"] = WiFi.localIP().toString();
+
+      String jsonPayload;
+      serializeJson(doc, jsonPayload);
+
+      // Publish the JSON payload to the topic
+      client.publish(mqttTopic, jsonPayload.c_str());
       
-        } else {
+    } else {
       Serial.print("Failed to connect to the MQTT. rc=");
       Serial.print(client.state());
       Serial.println(" Trying again in 5 sec...");
       delay(5000);
-        }
-      }
     }
+  }
+}
+
+void resetWiFiCredentials() {
+  // Clear saved Wi-Fi credentials
+  prefs.begin("wifi", false);
+  prefs.remove("ssid");
+  prefs.remove("password");
+  prefs.end();
+
+  Serial.println("Wi-Fi credentials cleared. Restarting in 5 seconds...");
+
+  // Blink the blue LED once per second for 5 seconds
+  for (int i = 0; i < 5; i++) {
+    digitalWrite(LED_WIFI, HIGH);
+    delay(500);
+    digitalWrite(LED_WIFI, LOW);
+    delay(500);
+  }
+
+  // Restart the ESP
+  ESP.restart();
+}
 
 void callback(char* topic, byte* payload, unsigned int length) {
-  if (String(topic) == WiFi.macAddress()) {
+  String topicStr = String(topic);
+
+  if (topicStr == mac + "/resetWifi") {
+    // Convert payload to a string
+    String payloadStr;
+    for (unsigned int i = 0; i < length; i++) {
+        payloadStr += (char)payload[i];
+    }
+
+    // Debug: Print the received payload
+    Serial.print("Received payload: ");
+    Serial.println(payloadStr);
+
+    // Check if the payload is "true" (case-insensitive)
+    if (payloadStr.equalsIgnoreCase("true") || payloadStr == "1") {
+      Serial.println("Reset Wi-Fi topic received. Clearing credentials...");
+      
+      // Blink the blue LED 3 times
+      for (int i = 0; i < 3; i++) {
+        digitalWrite(LED_WIFI, HIGH);
+        delay(200);
+        digitalWrite(LED_WIFI, LOW);
+        delay(200);
+      }
+
+      resetWiFiCredentials();
+    } else {
+      Serial.println("Payload did not match 'true'. Ignoring.");
+    }
+  } else if (topicStr == WiFi.macAddress()) {
     // Convert payload to a string
     String payloadStr;
     for (unsigned int i = 0; i < length; i++) {
@@ -238,9 +317,11 @@ void setup() {
     ArduinoOTA
       .onStart([]() {
         Serial.println("Starting OTA...");
+        detachInterrupt(digitalPinToInterrupt(interruptPin)); // Disable interrupts during OTA
             })
             .onEnd([]() {
         Serial.println("\nOTA completed!");
+        attachInterrupt(digitalPinToInterrupt(interruptPin), handleInterrupt, FALLING); // Re-enable interrupts
       })
       .onProgress([](unsigned int progress, unsigned int total) {
         Serial.printf("Progress: %u%%\r", (progress * 100) / total);
