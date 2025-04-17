@@ -14,7 +14,7 @@
 #define relayPin 19
 
 volatile unsigned int pulseCount = 0;
-const unsigned long debounceDelay = 150;  // in ms — adjust depending on your reed
+const unsigned long debounceDelay = 500;  // in ms — adjust depending on your reed
 unsigned long lastReportTime = 0;
 volatile unsigned long lastInterruptTime = 0;
 
@@ -39,6 +39,7 @@ const char* configPage = R"rawliteral(
 <body>
   <h2>Configure Wi-Fi</h2>
   <form action="/save" method="POST">
+    CPF: <input name="cpf"><br><br>
     SSID: <input name="ssid"><br><br>
     Password: <input name="password" type="password"><br><br>
     <input type="submit" value="Save and Connect">
@@ -51,10 +52,15 @@ const char* configPage = R"rawliteral(
 void handleSave() {
   String ssid = server.arg("ssid");
   String password = server.arg("password");
+  String cpf = server.arg("cpf");
 
   prefs.begin("wifi", false);
   prefs.putString("ssid", ssid);
   prefs.putString("password", password);
+  prefs.end();
+
+  prefs.begin("user", false);
+  prefs.putString("cpf", cpf);
   prefs.end();
 
   server.send(200, "text/html", "<h2>Saved! Restarting...</h2>");
@@ -151,6 +157,9 @@ void connectToMQTT() {
       DynamicJsonDocument doc(256);
       doc["mac"] = mac;
       doc["ip"] = WiFi.localIP().toString();
+      prefs.begin("user", true);
+      doc["cpf"] = prefs.getString("cpf", "");
+      prefs.end();
 
       String jsonPayload;
       serializeJson(doc, jsonPayload);
