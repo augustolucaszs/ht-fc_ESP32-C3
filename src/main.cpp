@@ -18,6 +18,9 @@ const unsigned long debounceDelay = 500;  // in ms — adjust depending on your 
 unsigned long lastReportTime = 0;
 volatile unsigned long lastInterruptTime = 0;
 
+unsigned long wifiBlinkTime = 0; // For Wi-Fi LED blinking
+unsigned long mqttReconnectTime = 0; // For MQTT reconnect delay
+
 WiFiClient espClient;
 PubSubClient client(espClient);
 
@@ -31,6 +34,16 @@ bool inConfigMode = false;
 float dayConsumption = 0.0; // Global variable to store the day consumption value
 String mac = ""; // Global variable to store the MAC address
 boolean debug = false; // Debug mode flag
+
+// Non-blocking delay function
+bool nonBlockingDelay(unsigned long interval, unsigned long &lastTime) {
+  unsigned long currentTime = millis();
+  if (currentTime - lastTime >= interval) {
+    lastTime = currentTime;
+    return true; // Delay interval has passed
+  }
+  return false; // Still within the delay interval
+}
 
 // Configuration page HTML
 const char* configPage = R"rawliteral(
@@ -108,11 +121,11 @@ bool connectToWiFi() {
   WiFi.begin(ssid.c_str(), password.c_str());
   Serial.println("Connecting to: " + ssid);
 
-  int attempts = 0;
   unsigned long startAttemptTime = millis();
   while (WiFi.status() != WL_CONNECTED && (millis() - startAttemptTime) < 5000) {
-    digitalWrite(LED_WIFI, !digitalRead(LED_WIFI));
-    delay(100);
+    if (nonBlockingDelay(100, wifiBlinkTime)) {
+      digitalWrite(LED_WIFI, !digitalRead(LED_WIFI)); // Toggle LED
+    }
   }
 
   if (WiFi.status() != WL_CONNECTED) {
@@ -171,7 +184,13 @@ void connectToMQTT() {
       Serial.print("Failed to connect to the MQTT. rc=");
       Serial.print(client.state());
       Serial.println(" Trying again in 5 sec...");
-      delay(5000);
+
+      // Use non-blocking delay for retry
+      while (!nonBlockingDelay(5000, mqttReconnectTime)) {
+        // Allow other tasks to run
+        client.loop();
+        ArduinoOTA.handle();
+      }
     }
   }
 }
@@ -186,11 +205,11 @@ void resetWiFiCredentials() {
   Serial.println("Wi-Fi credentials cleared. Restarting in 5 seconds...");
 
   // Blink the blue LED once per second for 5 seconds
+  unsigned long resetBlinkTime = 0;
   for (int i = 0; i < 5; i++) {
-    digitalWrite(LED_WIFI, HIGH);
-    delay(500);
-    digitalWrite(LED_WIFI, LOW);
-    delay(500);
+    if (nonBlockingDelay(500, resetBlinkTime)) {
+      digitalWrite(LED_WIFI, !digitalRead(LED_WIFI));
+    }
   }
 
   // Restart the ESP
