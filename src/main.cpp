@@ -89,7 +89,6 @@ void handleRoot() {
 // Starts the Access Point with configuration page
 void startConfigPortal() {
   inConfigMode = true;
-  WiFi.mode(WIFI_AP);
   IPAddress local_IP(10, 0, 0, 1);
   IPAddress gateway(10, 0, 0, 1);
   IPAddress subnet(255, 255, 255, 0);
@@ -106,7 +105,7 @@ void startConfigPortal() {
   Serial.println("Configuration mode started at http://10.0.0.1");
 }
 
-// Connects to the Wi-Fi saved in flash
+// Connects to the Wi-Fi saved in flash and starts AP in parallel
 bool connectToWiFi() {
   prefs.begin("wifi", true);
   String ssid = prefs.getString("ssid", "");
@@ -118,6 +117,10 @@ bool connectToWiFi() {
     return false;
   }
 
+  // Enable both STA and AP modes
+  WiFi.mode(WIFI_AP_STA);
+
+  // Connect to saved Wi-Fi network
   WiFi.begin(ssid.c_str(), password.c_str());
   Serial.println("Connecting to: " + ssid);
 
@@ -129,44 +132,56 @@ bool connectToWiFi() {
   }
 
   if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("Failed to connect to Wi-Fi. Entering configuration mode.");
-    startConfigPortal(); // Fallback to configuration mode
-    return false;
+    Serial.println("Failed to connect to Wi-Fi.");
+    // Still continue to AP setup
+  } else {
+    Serial.println("Successfully connected to Wi-Fi!");
+    Serial.print("STA IP: ");
+    Serial.println(WiFi.localIP());
   }
 
-  Serial.println("Successfully connected to Wi-Fi!");
-  return true;
+  // Start Access Point regardless of STA success
+  IPAddress local_IP(10, 0, 0, 1);
+  IPAddress gateway(10, 0, 0, 1);
+  IPAddress subnet(255, 255, 255, 0);
+
+  if (!WiFi.softAPConfig(local_IP, gateway, subnet)) {
+    Serial.println("Failed to configure AP IP address");
+  }
+
+  WiFi.softAP("HTFC - 10.0.0.1");
+
+  server.on("/", handleRoot);
+  server.on("/save", HTTP_POST, handleSave);
+  server.begin();
+
+  Serial.print("AP started. Access it at: ");
+  Serial.println(WiFi.softAPIP());
+
+  return WiFi.status() == WL_CONNECTED;
 }
+
 
 // Connection to the MQTT
 void connectToMQTT() {
   client.setServer(mqttServer, mqttPort);
   client.setCallback(callback);
+  // client.setKeepAlive(5); // Set keep-alive interval
+
 
   while (!client.connected()) {
     Serial.println("Connecting to the MQTT broker...");
 
-    if (client.connect("ESP32Client", mqttUsername, mqttPassword)) {
+    if (client.connect("ESP32Client", mqttUsername, mqttPassword, "device/status", 1, true, "offline")) { // Set LWT here
       Serial.println("Connected to the MQTT!");
 
-      String otaTopic = "esp/ota/";
-      client.subscribe(otaTopic.c_str());
-      Serial.print("Subscribed to OTA topic: ");
-      Serial.println(otaTopic);
+      // Publish online status
+      client.publish("device/status", "online", true);
 
+      client.subscribe("esp/ota/");
       client.subscribe(mac.c_str());
-      Serial.print("Subscribed to macAddress device's topic: ");
-      Serial.println(mac);
+      client.subscribe((mac + "/resetWifi").c_str());
 
-      String resetWifiTopic = mac + "/resetWifi";
-      client.subscribe(resetWifiTopic.c_str());
-      Serial.print("Subscribed to reset Wi-Fi topic: ");
-      Serial.println(resetWifiTopic);
-
-      Serial.print("Sending MAC address and IP address to the topic: ");
-      Serial.println(mqttTopic);
-
-      // Create a JSON payload with MAC address and IP address
       DynamicJsonDocument doc(256);
       doc["mac"] = mac;
       doc["ip"] = WiFi.localIP().toString();
@@ -177,17 +192,14 @@ void connectToMQTT() {
       String jsonPayload;
       serializeJson(doc, jsonPayload);
 
-      // Publish the JSON payload to the topic
       client.publish(mqttTopic, jsonPayload.c_str());
-      
+
     } else {
       Serial.print("Failed to connect to the MQTT. rc=");
       Serial.print(client.state());
       Serial.println(" Trying again in 5 sec...");
 
-      // Use non-blocking delay for retry
       while (!nonBlockingDelay(5000, mqttReconnectTime)) {
-        // Allow other tasks to run
         client.loop();
         ArduinoOTA.handle();
       }
@@ -233,7 +245,7 @@ void callback(char* topic, byte* payload, unsigned int length) {
     // Check if the payload is "true" (case-insensitive)
     if (payloadStr.equalsIgnoreCase("true") || payloadStr == "1") {
       Serial.println("Reset Wi-Fi topic received. Clearing credentials...");
-      
+
       // Blink the blue LED 3 times
       for (int i = 0; i < 3; i++) {
         digitalWrite(LED_WIFI, HIGH);
@@ -264,7 +276,7 @@ void callback(char* topic, byte* payload, unsigned int length) {
     client.publish(testMqttTopic.c_str(), dayConsumptionStr.c_str());
 
   } else {
-    JsonDocument doc;
+    DynamicJsonDocument doc(1024); // Adjust the size (1024) as needed
     DeserializationError error = deserializeJson(doc, payload, length);
 
     if (error) {
@@ -318,15 +330,7 @@ void IRAM_ATTR handleInterrupt() {
 
 void setup() {
   pinMode(LED_WIFI, OUTPUT);
-  pinMode(relayPin, OUTPUT);
-  pinMode(interruptPin, INPUT);
-
-  digitalWrite(LED_WIFI, HIGH);
-  digitalWrite(relayPin, LOW); // Relay off
-  attachInterrupt(digitalPinToInterrupt(interruptPin), handleInterrupt, FALLING); // RISING since LOW -> HIGH
-  
-  Serial.begin(115200);
-  delay(1000);
+  delay(100);
 
   if (!connectToWiFi()) {
     Serial.println("Connection failed. Entering configuration mode.");
@@ -367,21 +371,54 @@ void setup() {
           Serial.println("OTA ready! Use the IDE to upload new code via Wi-Fi.");
 
   }
+
+  pinMode(interruptPin, INPUT);
+  delay(100);
+  pinMode(relayPin, OUTPUT);
+  delay(100);
+  digitalWrite(relayPin, LOW);
+  delay(100);
+
+
+  attachInterrupt(digitalPinToInterrupt(interruptPin), handleInterrupt, FALLING); // RISING since LOW -> HIGH
+  delay(100);
 }
 
 void loop() {
   if (inConfigMode) {
     server.handleClient();
-    digitalWrite(LED_WIFI, !digitalRead(LED_WIFI));
-    delay(100);
+  if (nonBlockingDelay(100, wifiBlinkTime)) {
+      digitalWrite(LED_WIFI, !digitalRead(LED_WIFI)); // Toggle LED
+      }
+      return;
+    }
+
+// Check Wi-Fi connection
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("Wi-Fi disconnected. Reconnecting...");
+    connectToWiFi();
+    return; // Exit loop to avoid further processing until Wi-Fi is reconnected
   }
 
-  if (WiFi.status() == WL_CONNECTED) {
+  // Handle OTA updates
     ArduinoOTA.handle();
-    client.loop();
+
+  // Check MQTT connection and reconnect if necessary
+  static bool reconnecting = false; // Track if a reconnection attempt is in progress
+  if (!client.connected()) {
+    if (!reconnecting && nonBlockingDelay(5000, mqttReconnectTime)) { // Retry every 5 seconds
+      reconnecting = true;
+      Serial.println("MQTT disconnected. Attempting to reconnect...");
+      connectToMQTT();
+      reconnecting = false;
+    }
+  } else {
+    client.loop(); // Maintain MQTT connection
   }
 
-  if (millis() - lastReportTime >= 60000) {
+  if (millis() - lastReportTime >= 1000) {
+    Serial.println("Sending data to MQTT...");
+    digitalWrite(relayPin, LOW); // Relay on
     noInterrupts();
     unsigned int liters = pulseCount;
     pulseCount = 0;
@@ -395,20 +432,17 @@ void loop() {
     String debugTopic = mac + "/debug";
     String payload = "Liters in last minute: " + String(liters);
 
-    if (!client.connected()) {
-      Serial.println("MQTT disconnected. Reconnecting...");
-      connectToMQTT(); // reconecta se necessário
-    }
-    
-    // Publish to MQTT
+        // Publish to MQTT
     if (client.connected()) {
       client.publish(debugTopic.c_str(), payload.c_str(), true);
     } else {
       Serial.println("MQTT not connected — skipping publish.");
     }
+    delay(100);
 
     lastReportTime = millis();
   }
-  
-}
+  delay(100);
+
+  }
 
