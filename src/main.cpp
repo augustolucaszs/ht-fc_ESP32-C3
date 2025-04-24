@@ -9,17 +9,17 @@
 #include "secrets.h"
 #include <ArduinoJson.h>
 
-#define LED_WIFI 2 // Blue LED on GPIO2
+#define LED_WIFI 2
 #define interruptPin 3
 #define relayPin 19
 
 volatile unsigned int pulseCount = 0;
-const unsigned long debounceDelay = 500;  // in ms — adjust depending on your reed
+const unsigned long debounceDelay = 300;
 unsigned long lastReportTime = 0;
 volatile unsigned long lastInterruptTime = 0;
 
-unsigned long wifiBlinkTime = 0; // For Wi-Fi LED blinking
-unsigned long mqttReconnectTime = 0; // For MQTT reconnect delay
+unsigned long wifiBlinkTime = 0;
+unsigned long mqttReconnectTime = 0;
 
 WiFiClient espClient;
 PubSubClient client(espClient);
@@ -31,21 +31,19 @@ WebServer server(80);
 
 bool inConfigMode = false;
 
-float dayConsumption = 0.0; // Global variable to store the day consumption value
-String mac = ""; // Global variable to store the MAC address
-boolean debug = false; // Debug mode flag
+float dayConsumption = 0.0;
+String mac = "";
+boolean debug = false; 
 
-// Non-blocking delay function
 bool nonBlockingDelay(unsigned long interval, unsigned long &lastTime) {
   unsigned long currentTime = millis();
   if (currentTime - lastTime >= interval) {
     lastTime = currentTime;
-    return true; // Delay interval has passed
+    return true; 
   }
-  return false; // Still within the delay interval
+  return false; 
 }
 
-// Configuration page HTML
 const char* configPage = R"rawliteral(
 <!DOCTYPE html><html>
 <head><meta charset="UTF-8"><title>Configure Wi-Fi</title></head>
@@ -61,7 +59,6 @@ const char* configPage = R"rawliteral(
 </html>
 )rawliteral";
 
-// Saves the new Wi-Fi data and restarts
 void handleSave() {
   String ssid = server.arg("ssid");
   String password = server.arg("password");
@@ -81,12 +78,10 @@ void handleSave() {
   ESP.restart();
 }
 
-// Main page in AP mode
 void handleRoot() {
   server.send(200, "text/html", configPage);
 }
 
-// Starts the Access Point with configuration page
 void startConfigPortal() {
   inConfigMode = true;
   IPAddress local_IP(10, 0, 0, 1);
@@ -105,7 +100,6 @@ void startConfigPortal() {
   Serial.println("Configuration mode started at http://10.0.0.1");
 }
 
-// Connects to the Wi-Fi saved in flash and starts AP in parallel
 bool connectToWiFi() {
   prefs.begin("wifi", true);
   String ssid = prefs.getString("ssid", "");
@@ -117,30 +111,27 @@ bool connectToWiFi() {
     return false;
   }
 
-  // Enable both STA and AP modes
   WiFi.mode(WIFI_AP_STA);
 
-  // Connect to saved Wi-Fi network
   WiFi.begin(ssid.c_str(), password.c_str());
   Serial.println("Connecting to: " + ssid);
 
   unsigned long startAttemptTime = millis();
   while (WiFi.status() != WL_CONNECTED && (millis() - startAttemptTime) < 5000) {
     if (nonBlockingDelay(100, wifiBlinkTime)) {
-      digitalWrite(LED_WIFI, !digitalRead(LED_WIFI)); // Toggle LED
+      digitalWrite(LED_WIFI, !digitalRead(LED_WIFI)); 
     }
   }
 
   if (WiFi.status() != WL_CONNECTED) {
     Serial.println("Failed to connect to Wi-Fi.");
-    // Still continue to AP setup
-  } else {
+  } 
+  else {
     Serial.println("Successfully connected to Wi-Fi!");
     Serial.print("STA IP: ");
     Serial.println(WiFi.localIP());
   }
 
-  // Start Access Point regardless of STA success
   IPAddress local_IP(10, 0, 0, 1);
   IPAddress gateway(10, 0, 0, 1);
   IPAddress subnet(255, 255, 255, 0);
@@ -161,21 +152,16 @@ bool connectToWiFi() {
   return WiFi.status() == WL_CONNECTED;
 }
 
-
-// Connection to the MQTT
 void connectToMQTT() {
   client.setServer(mqttServer, mqttPort);
   client.setCallback(callback);
-  // client.setKeepAlive(5); // Set keep-alive interval
-
 
   while (!client.connected()) {
     Serial.println("Connecting to the MQTT broker...");
 
-    if (client.connect("ESP32Client", mqttUsername, mqttPassword, "device/status", 1, true, "offline")) { // Set LWT here
+    if (client.connect("ESP32Client", mqttUsername, mqttPassword, "device/status", 1, true, "offline")) {
       Serial.println("Connected to the MQTT!");
 
-      // Publish online status
       client.publish("device/status", "online", true);
 
       client.subscribe("esp/ota/");
@@ -194,7 +180,8 @@ void connectToMQTT() {
 
       client.publish(mqttTopic, jsonPayload.c_str());
 
-    } else {
+    } 
+    else {
       Serial.print("Failed to connect to the MQTT. rc=");
       Serial.print(client.state());
       Serial.println(" Trying again in 5 sec...");
@@ -208,7 +195,6 @@ void connectToMQTT() {
 }
 
 void resetWiFiCredentials() {
-  // Clear saved Wi-Fi credentials
   prefs.begin("wifi", false);
   prefs.remove("ssid");
   prefs.remove("password");
@@ -216,7 +202,6 @@ void resetWiFiCredentials() {
 
   Serial.println("Wi-Fi credentials cleared. Restarting in 5 seconds...");
 
-  // Blink the blue LED once per second for 5 seconds
   unsigned long resetBlinkTime = 0;
   for (int i = 0; i < 5; i++) {
     if (nonBlockingDelay(500, resetBlinkTime)) {
@@ -224,7 +209,6 @@ void resetWiFiCredentials() {
     }
   }
 
-  // Restart the ESP
   ESP.restart();
 }
 
@@ -232,21 +216,17 @@ void callback(char* topic, byte* payload, unsigned int length) {
   String topicStr = String(topic);
 
   if (topicStr == mac + "/resetWifi") {
-    // Convert payload to a string
     String payloadStr;
     for (unsigned int i = 0; i < length; i++) {
         payloadStr += (char)payload[i];
     }
 
-    // Debug: Print the received payload
     Serial.print("Received payload: ");
     Serial.println(payloadStr);
 
-    // Check if the payload is "true" (case-insensitive)
     if (payloadStr.equalsIgnoreCase("true") || payloadStr == "1") {
       Serial.println("Reset Wi-Fi topic received. Clearing credentials...");
 
-      // Blink the blue LED 3 times
       for (int i = 0; i < 3; i++) {
         digitalWrite(LED_WIFI, HIGH);
         delay(200);
@@ -255,28 +235,28 @@ void callback(char* topic, byte* payload, unsigned int length) {
       }
 
       resetWiFiCredentials();
-    } else {
+    } 
+    else {
       Serial.println("Payload did not match 'true'. Ignoring.");
     }
-  } else if (topicStr == WiFi.macAddress()) {
-    // Convert payload to a string
+  } 
+  else if (topicStr == WiFi.macAddress()) {
     String payloadStr;
     for (unsigned int i = 0; i < length; i++) {
       payloadStr += (char)payload[i];
     }
 
-    // Convert the payload string to a float
     dayConsumption = payloadStr.toFloat();
     Serial.print("Received dayConsumption value: ");
     Serial.println(dayConsumption);
 
-    // Publish the dayConsumption value to a test topic for verification
     String testMqttTopic = mac + "/test";
-    String dayConsumptionStr = String(dayConsumption, 2); // Convert to string with 2 decimal places
+    String dayConsumptionStr = String(dayConsumption, 2);
     client.publish(testMqttTopic.c_str(), dayConsumptionStr.c_str());
 
-  } else {
-    DynamicJsonDocument doc(1024); // Adjust the size (1024) as needed
+  } 
+  else {
+    DynamicJsonDocument doc(1024);
     DeserializationError error = deserializeJson(doc, payload, length);
 
     if (error) {
@@ -319,7 +299,6 @@ void callback(char* topic, byte* payload, unsigned int length) {
   }
 }
 
-
 void IRAM_ATTR handleInterrupt() {
   unsigned long now = millis();
   if (now - lastInterruptTime > debounceDelay) {
@@ -349,11 +328,11 @@ void setup() {
     ArduinoOTA
       .onStart([]() {
         Serial.println("Starting OTA...");
-        detachInterrupt(digitalPinToInterrupt(interruptPin)); // Disable interrupts during OTA
+        detachInterrupt(digitalPinToInterrupt(interruptPin));
             })
             .onEnd([]() {
         Serial.println("\nOTA completed!");
-        attachInterrupt(digitalPinToInterrupt(interruptPin), handleInterrupt, FALLING); // Re-enable interrupts
+        attachInterrupt(digitalPinToInterrupt(interruptPin), handleInterrupt, RISING);
       })
       .onProgress([](unsigned int progress, unsigned int total) {
         Serial.printf("Progress: %u%%\r", (progress * 100) / total);
@@ -369,7 +348,6 @@ void setup() {
 
           ArduinoOTA.begin();
           Serial.println("OTA ready! Use the IDE to upload new code via Wi-Fi.");
-
   }
 
   pinMode(interruptPin, INPUT);
@@ -379,50 +357,59 @@ void setup() {
   digitalWrite(relayPin, LOW);
   delay(100);
 
-
-  attachInterrupt(digitalPinToInterrupt(interruptPin), handleInterrupt, FALLING); // RISING since LOW -> HIGH
+  attachInterrupt(digitalPinToInterrupt(interruptPin), handleInterrupt, RISING); // RISING since LOW -> HIGH
   delay(100);
 }
 
+void REconnectToMQTT(){
+  while (!client.connected()) {
+    Serial.print("Attempting MQTT connection...");
+    String clientId = "ESP_";
+    clientId += mac;
+
+    if (client.connect(clientId.c_str(), mqttUsername, mqttPassword, "device/status", 1, true, "offline")) {
+      client.subscribe("esp/ota/");
+      client.subscribe(mac.c_str());
+      client.subscribe((mac + "/resetWifi").c_str());
+
+    } else {
+      Serial.print("failed, rc=");
+      Serial.print(client.state());
+      Serial.println(" try again in 5 seconds");
+      delay(5000);
+    }
+  }
+}
+
 void loop() {
+  
   if (inConfigMode) {
     server.handleClient();
-  if (nonBlockingDelay(100, wifiBlinkTime)) {
-      digitalWrite(LED_WIFI, !digitalRead(LED_WIFI)); // Toggle LED
+  
+    if (nonBlockingDelay(100, wifiBlinkTime)) {
+        digitalWrite(LED_WIFI, !digitalRead(LED_WIFI));
       }
-      return;
-    }
+    return;
+  }
 
-// Check Wi-Fi connection
   if (WiFi.status() != WL_CONNECTED) {
     Serial.println("Wi-Fi disconnected. Reconnecting...");
     connectToWiFi();
-    return; // Exit loop to avoid further processing until Wi-Fi is reconnected
+    return; 
   }
 
-  // Handle OTA updates
-    ArduinoOTA.handle();
+  ArduinoOTA.handle();
 
-  // Check MQTT connection and reconnect if necessary
-  static bool reconnecting = false; // Track if a reconnection attempt is in progress
   if (!client.connected()) {
-    if (!reconnecting && nonBlockingDelay(5000, mqttReconnectTime)) { // Retry every 5 seconds
-      reconnecting = true;
-      Serial.println("MQTT disconnected. Attempting to reconnect...");
-      connectToMQTT();
-      reconnecting = false;
-    }
-  } else {
-    client.loop(); // Maintain MQTT connection
+    REconnectToMQTT();
   }
+  client.loop();
 
-  if (millis() - lastReportTime >= 1000) {
+  if (millis() - lastReportTime >= 60000) {
     Serial.println("Sending data to MQTT...");
-    digitalWrite(relayPin, LOW); // Relay on
-    noInterrupts();
+    digitalWrite(relayPin, LOW);
     unsigned int liters = pulseCount;
     pulseCount = 0;
-    interrupts();
   
     Serial.print("Liters in last minute: ");
     Serial.println(liters);
@@ -431,13 +418,8 @@ void loop() {
     // Compose MQTT topic and message
     String debugTopic = mac + "/debug";
     String payload = "Liters in last minute: " + String(liters);
-
-        // Publish to MQTT
-    if (client.connected()) {
-      client.publish(debugTopic.c_str(), payload.c_str(), true);
-    } else {
-      Serial.println("MQTT not connected — skipping publish.");
-    }
+    
+    client.publish(debugTopic.c_str(), payload.c_str(), true);
     delay(100);
 
     lastReportTime = millis();
