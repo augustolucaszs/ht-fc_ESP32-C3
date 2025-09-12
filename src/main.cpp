@@ -159,7 +159,7 @@ void connectToMQTT() {
   while (!client.connected()) {
     Serial.println("Connecting to the MQTT broker...");
 
-    if (client.connect("ESP32Client", mqttUsername, mqttPassword, "device/status", 1, true, "offline")) {
+    if (client.connect(("dev_"+ mac).c_str(), mqttUsername, mqttPassword, "device/status", 1, true, "offline")) {
       Serial.println("Connected to the MQTT!");
 
       client.publish("device/status", "online", true);
@@ -307,6 +307,26 @@ void IRAM_ATTR handleInterrupt() {
   }
 }
 
+void REconnectToMQTT(){
+  while (!client.connected()) {
+    Serial.print("Attempting MQTT connection...");
+    String clientId = "ESP_";
+    clientId += mac;
+
+    if (client.connect(clientId.c_str(), mqttUsername, mqttPassword, "device/status", 1, true, "offline")) {
+      client.subscribe("esp/ota/");
+      client.subscribe(mac.c_str());
+      client.subscribe((mac + "/resetWifi").c_str());
+
+    } else {
+      Serial.print("failed, rc=");
+      Serial.print(client.state());
+      Serial.println(" try again in 5 seconds");
+      delay(5000);
+    }
+  }
+}
+
 void setup() {
   pinMode(LED_WIFI, OUTPUT);
   delay(100);
@@ -359,26 +379,6 @@ void setup() {
 
   attachInterrupt(digitalPinToInterrupt(interruptPin), handleInterrupt, RISING); // RISING since LOW -> HIGH
   delay(100);
-}
-
-void REconnectToMQTT(){
-  while (!client.connected()) {
-    Serial.print("Attempting MQTT connection...");
-    String clientId = "ESP_";
-    clientId += mac;
-
-    if (client.connect(clientId.c_str(), mqttUsername, mqttPassword, "device/status", 1, true, "offline")) {
-      client.subscribe("esp/ota/");
-      client.subscribe(mac.c_str());
-      client.subscribe((mac + "/resetWifi").c_str());
-
-    } else {
-      Serial.print("failed, rc=");
-      Serial.print(client.state());
-      Serial.println(" try again in 5 seconds");
-      delay(5000);
-    }
-  }
 }
 
 void loop() {
